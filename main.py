@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import threading
-import webbrowser
+import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -10,31 +10,39 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 TOKEN = "8672220677:AAHYvjAfDvqpQuSxbQ3jwT7A34xvg8EImaU"
 # =================================
 
-# Хранилище для таймеров
+# Хранилище таймеров
 active_timers = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Бот для управления ПК готов!\n\n"
+        "🤖 Бот для управления ПК запущен!\n\n"
         "Команды:\n"
-        "/shutdown - выключить ПК сейчас\n"
+        "/shutdown - выключить компьютер сейчас\n"
         "/timer X - выключить через X минут\n"
         "/cancel - отменить таймер\n"
-        "/open URL - открыть сайт (например /open google.com)\n"
-        "/help - показать это сообщение"
+        "/open URL - открыть сайт (пример: /open google.com)\n"
+        "/ping - проверить что бот работает"
     )
+
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🏓 Бот работает!")
 
 async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await update.message.reply_text("⚠️ ВЫКЛЮЧАЮ КОМПЬЮТЕР...")
     
-    # Отменяем таймер если был
+    # Отменяем таймер если есть
     if user_id in active_timers:
         active_timers[user_id].cancel()
         del active_timers[user_id]
     
-    # Выключаем
-    os.system("shutdown /s /t 10" if sys.platform == "win32" else "shutdown -h now")
+    await update.message.reply_text("⚠️ ВЫКЛЮЧЕНИЕ КОМПЬЮТЕРА ЧЕРЕЗ 10 СЕКУНД!")
+    
+    # Команда выключения для разных ОС
+    if sys.platform == "win32":
+        os.system("shutdown /s /t 10")
+    else:
+        os.system("shutdown -h +0.1")
+    
     await update.message.reply_text("💀 Команда выполнена")
 
 async def timer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -57,28 +65,29 @@ async def timer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_timers[user_id].cancel()
     
     seconds = minutes * 60
-    await update.message.reply_text(f"⏰ Таймер установлен на {minutes} мин. Пришлю уведомление перед выключением.")
+    await update.message.reply_text(f"⏰ Таймер установлен на {minutes} мин. Компьютер выключится через {minutes} минут.")
     
     def shutdown_task():
         time.sleep(seconds)
-        os.system("shutdown /s /t 10" if sys.platform == "win32" else "shutdown -h now")
+        if sys.platform == "win32":
+            os.system("shutdown /s /t 10")
+        else:
+            os.system("shutdown -h +0.1")
     
     timer = threading.Timer(seconds, shutdown_task)
     timer.daemon = True
     timer.start()
     active_timers[user_id] = timer
     
-    # Поток для уведомлений за 10 секунд
-    def notify_task():
-        time.sleep(seconds - 10)
-        import asyncio
-        asyncio.run_coroutine_threadsafe(
-            update.message.reply_text("⚠️ ЧЕРЕЗ 10 СЕКУНД ВЫКЛЮЧЕНИЕ! Сохраните данные!"),
-            context.application.update_queue
-        )
-    
-    notify = threading.Thread(target=notify_task, daemon=True)
-    notify.start()
+    # Уведомление за 10 секунд до выключения
+    if seconds > 10:
+        def notify():
+            time.sleep(seconds - 10)
+            # Отправляем уведомление через бота (упрощённо)
+            print(f"Уведомление: через 10 секунд выключение для {user_id}")
+        
+        notify_thread = threading.Thread(target=notify, daemon=True)
+        notify_thread.start()
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -86,9 +95,9 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in active_timers:
         active_timers[user_id].cancel()
         del active_timers[user_id]
-        await update.message.reply_text("✅ Таймер отменён")
+        await update.message.reply_text("✅ Таймер выключения отменён")
     else:
-        await update.message.reply_text("❌ Активных таймеров нет")
+        await update.message.reply_text("❌ Нет активных таймеров")
 
 async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -99,26 +108,29 @@ async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     
-    try:
-        webbrowser.open(url)
-        await update.message.reply_text(f"✅ Открываю: {url}")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
+    await update.message.reply_text(f"🌐 Открываю в браузере: {url}")
+    
+    # Для разных ОС
+    if sys.platform == "win32":
+        os.system(f'start {url}')
+    elif sys.platform == "darwin":
+        os.system(f'open {url}')
+    else:
+        os.system(f'xdg-open {url}')
 
 def main():
+    """Запуск бота"""
     app = Application.builder().token(TOKEN).build()
     
+    # Регистрируем команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shutdown", shutdown_command))
     app.add_handler(CommandHandler("timer", timer_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("open", open_command))
-    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("ping", ping))
     
-    print("🤖 Бот запущен! Напиши /start в Telegram")
+    print("🤖 Бот запущен! Жду команды...")
     app.run_polling()
 
 if __name__ == "__main__":
