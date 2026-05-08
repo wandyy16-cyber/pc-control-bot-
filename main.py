@@ -1,175 +1,125 @@
 import os
 import sys
-import threading
 import time
+import threading
 import webbrowser
-from tkinter import *
-from tkinter import messagebox, ttk
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# ========== ТВОЙ ТОКЕН ВСТАВЛЕН ==========
-TELEGRAM_BOT_TOKEN = "8672220677:AAHYvjAfDvqpQuSxbQ3jwT7A34xvg8EImaU"
-# =========================================
+# ========== ТВОЙ ТОКЕН ==========
+TOKEN = "8672220677:AAHYvjAfDvqpQuSxbQ3jwT7A34xvg8EImaU"
+# =================================
 
-class PCControlBot:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("PC Control Bot")
-        self.root.geometry("500x400")
-        self.root.resizable(False, False)
-        
-        self.timer_running = False
-        self.remaining_seconds = 0
-        self.timer_thread = None
-        
-        self.setup_ui()
+# Хранилище для таймеров
+active_timers = {}
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Бот для управления ПК готов!\n\n"
+        "Команды:\n"
+        "/shutdown - выключить ПК сейчас\n"
+        "/timer X - выключить через X минут\n"
+        "/cancel - отменить таймер\n"
+        "/open URL - открыть сайт (например /open google.com)\n"
+        "/help - показать это сообщение"
+    )
+
+async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    await update.message.reply_text("⚠️ ВЫКЛЮЧАЮ КОМПЬЮТЕР...")
     
-    def setup_ui(self):
-        title = Label(self.root, text="Управление компьютером", font=("Arial", 16, "bold"))
-        title.pack(pady=10)
-        
-        # Мгновенное выключение
-        frame_instant = LabelFrame(self.root, text="Мгновенное выключение", padx=10, pady=10)
-        frame_instant.pack(fill="x", padx=20, pady=10)
-        
-        btn_shutdown = Button(frame_instant, text="ВЫКЛЮЧИТЬ ПК СЕЙЧАС", bg="red", fg="white", 
-                              font=("Arial", 12, "bold"), command=self.shutdown_now)
-        btn_shutdown.pack(fill="x")
-        
-        # Таймер
-        frame_timer = LabelFrame(self.root, text="Выключение по таймеру", padx=10, pady=10)
-        frame_timer.pack(fill="x", padx=20, pady=10)
-        
-        timer_controls = Frame(frame_timer)
-        timer_controls.pack(fill="x")
-        
-        Label(timer_controls, text="Минут:", font=("Arial", 11)).pack(side="left", padx=5)
-        
-        self.timer_entry = Entry(timer_controls, width=10, font=("Arial", 11))
-        self.timer_entry.pack(side="left", padx=5)
-        self.timer_entry.insert(0, "5")
-        
-        self.start_timer_btn = Button(timer_controls, text="Запустить таймер", bg="orange", 
-                                       command=self.start_timer, font=("Arial", 10))
-        self.start_timer_btn.pack(side="left", padx=10)
-        
-        self.cancel_timer_btn = Button(timer_controls, text="Отменить", bg="gray", fg="white", 
-                                        command=self.cancel_timer, font=("Arial", 10), state="disabled")
-        self.cancel_timer_btn.pack(side="left")
-        
-        self.timer_label = Label(frame_timer, text="⏳ Таймер не активен", fg="blue", font=("Arial", 10))
-        self.timer_label.pack(pady=10)
-        
-        # Открытие страниц
-        frame_browser = LabelFrame(self.root, text="Открыть страницу в браузере", padx=10, pady=10)
-        frame_browser.pack(fill="x", padx=20, pady=10)
-        
-        url_controls = Frame(frame_browser)
-        url_controls.pack(fill="x")
-        
-        Label(url_controls, text="URL:", font=("Arial", 11)).pack(side="left", padx=5)
-        
-        self.url_entry = Entry(url_controls, width=30, font=("Arial", 11))
-        self.url_entry.pack(side="left", padx=5)
-        self.url_entry.insert(0, "https://www.google.com")
-        
-        btn_open = Button(url_controls, text="🔥 Открыть", bg="green", fg="white", 
-                          command=self.open_url, font=("Arial", 10))
-        btn_open.pack(side="left", padx=5)
-        
-        btn_exit = Button(self.root, text="Закрыть бота", bg="gray", fg="white", 
-                          command=self.exit_app, font=("Arial", 10))
-        btn_exit.pack(pady=10)
+    # Отменяем таймер если был
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
     
-    def shutdown_now(self):
-        if messagebox.askyesno("Подтверждение", "Вы уверены, что хотите выключить компьютер СЕЙЧАС?\nВсе несохранённые данные будут потеряны!"):
-            self.cancel_timer()
-            messagebox.showinfo("Выключение", "Компьютер выключается...")
-            self._shutdown_system()
+    # Выключаем
+    os.system("shutdown /s /t 10" if sys.platform == "win32" else "shutdown -h now")
+    await update.message.reply_text("💀 Команда выполнена")
+
+async def timer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     
-    def start_timer(self):
-        if self.timer_running:
-            messagebox.showwarning("Таймер уже запущен", "Сначала отмените текущий таймер")
-            return
-        
-        try:
-            minutes = int(self.timer_entry.get())
-            if minutes <= 0:
-                messagebox.showerror("Ошибка", "Введите положительное число минут")
-                return
-        except ValueError:
-            messagebox.showerror("Ошибка", "Введите число минут")
-            return
-        
-        if messagebox.askyesno("Подтверждение", f"Выключить компьютер через {minutes} минут?"):
-            self.remaining_seconds = minutes * 60
-            self.timer_running = True
-            self.start_timer_btn.config(state="disabled")
-            self.cancel_timer_btn.config(state="normal")
-            self.timer_entry.config(state="disabled")
-            
-            self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
-            self.timer_thread.start()
+    if not context.args:
+        await update.message.reply_text("❌ Укажи время в минутах. Пример: /timer 5")
+        return
     
-    def _timer_loop(self):
-        while self.timer_running and self.remaining_seconds > 0:
-            mins = self.remaining_seconds // 60
-            secs = self.remaining_seconds % 60
-            self.timer_label.config(text=f"⏰ Выключение через: {mins:02d}:{secs:02d}")
-            time.sleep(1)
-            self.remaining_seconds -= 1
-        
-        if self.timer_running and self.remaining_seconds == 0:
-            self.timer_label.config(text="💀 ВЫКЛЮЧЕНИЕ...")
-            self._shutdown_system()
+    try:
+        minutes = int(context.args[0])
+        if minutes <= 0:
+            raise ValueError
+    except:
+        await update.message.reply_text("❌ Введи положительное число минут")
+        return
     
-    def cancel_timer(self):
-        if self.timer_running:
-            self.timer_running = False
-            if self.timer_thread and self.timer_thread.is_alive():
-                self.timer_thread.join(timeout=1)
-            self.timer_label.config(text="⏳ Таймер отменён")
-            self.start_timer_btn.config(state="normal")
-            self.cancel_timer_btn.config(state="disabled")
-            self.timer_entry.config(state="normal")
-            messagebox.showinfo("Таймер отменён", "Выключение по таймеру отменено")
+    # Отменяем старый таймер
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
     
-    def open_url(self):
-        url = self.url_entry.get().strip()
-        if not url:
-            messagebox.showerror("Ошибка", "Введите URL")
-            return
-        
-        if not url.startswith(("http://", "https://")):
-            url = "https://" + url
-        
-        try:
-            webbrowser.open(url)
-            messagebox.showinfo("Успех", f"Страница открывается:\n{url}")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось открыть браузер:\n{str(e)}")
+    seconds = minutes * 60
+    await update.message.reply_text(f"⏰ Таймер установлен на {minutes} мин. Пришлю уведомление перед выключением.")
     
-    def _shutdown_system(self):
-        try:
-            if sys.platform == "win32":
-                os.system("shutdown /s /t 1")
-            elif sys.platform == "darwin":
-                os.system("sudo shutdown -h now")
-            else:
-                os.system("shutdown now")
-        except:
-            messagebox.showerror("Ошибка", "Не удалось выполнить команду выключения")
-        finally:
-            self.root.quit()
+    def shutdown_task():
+        time.sleep(seconds)
+        os.system("shutdown /s /t 10" if sys.platform == "win32" else "shutdown -h now")
     
-    def exit_app(self):
-        if self.timer_running:
-            if messagebox.askyesno("Таймер активен", "Закрыть программу и отменить таймер?"):
-                self.cancel_timer()
-                self.root.destroy()
-        else:
-            self.root.destroy()
+    timer = threading.Timer(seconds, shutdown_task)
+    timer.daemon = True
+    timer.start()
+    active_timers[user_id] = timer
+    
+    # Поток для уведомлений за 10 секунд
+    def notify_task():
+        time.sleep(seconds - 10)
+        import asyncio
+        asyncio.run_coroutine_threadsafe(
+            update.message.reply_text("⚠️ ЧЕРЕЗ 10 СЕКУНД ВЫКЛЮЧЕНИЕ! Сохраните данные!"),
+            context.application.update_queue
+        )
+    
+    notify = threading.Thread(target=notify_task, daemon=True)
+    notify.start()
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
+        await update.message.reply_text("✅ Таймер отменён")
+    else:
+        await update.message.reply_text("❌ Активных таймеров нет")
+
+async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❌ Укажи URL. Пример: /open google.com")
+        return
+    
+    url = " ".join(context.args)
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    
+    try:
+        webbrowser.open(url)
+        await update.message.reply_text(f"✅ Открываю: {url}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
+
+def main():
+    app = Application.builder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("shutdown", shutdown_command))
+    app.add_handler(CommandHandler("timer", timer_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("open", open_command))
+    app.add_handler(CommandHandler("help", help_command))
+    
+    print("🤖 Бот запущен! Напиши /start в Telegram")
+    app.run_polling()
 
 if __name__ == "__main__":
-    root = Tk()
-    app = PCControlBot(root)
-    root.mainloop()
+    main()
